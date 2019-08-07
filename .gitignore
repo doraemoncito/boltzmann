@@ -39,3 +39,4 @@ cmake_install.cmake
 boltzmann-openmp
 boltzman-openmp/av_vels.dat
 boltzman-openmp/final_state.dat
+boltzmann-opencl
