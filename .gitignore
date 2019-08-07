@@ -30,3 +30,12 @@
 *.exe
 *.out
 *.app
+.idea/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+*.cbp
+boltzmann-openmp
+boltzman-openmp/av_vels.dat
+boltzman-openmp/final_state.dat
