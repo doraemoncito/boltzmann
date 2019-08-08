@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.14.5)
+project(boltzmann-original)
+add_executable(boltzmann-original d2q9-bgk.c input.params obstacles.dat)
+target_link_libraries(boltzmann-original)
+configure_file(input.params ${CMAKE_CURRENT_BINARY_DIR}/input.params COPYONLY)
+configure_file(obstacles.dat ${CMAKE_CURRENT_BINARY_DIR}/obstacles.dat COPYONLY)

@@ -30,6 +30,7 @@
 *.exe
 *.out
 *.app
+
 .idea/
 CMakeFiles/
 CMakeCache.txt
@@ -37,6 +38,8 @@ Makefile
 cmake_install.cmake
 *.cbp
 boltzmann-openmp
-boltzman-openmp/av_vels.dat
-boltzman-openmp/final_state.dat
+av_vels.dat
+final_state.dat
 boltzmann-opencl
+boltzmann-original
+boltzmann-serial

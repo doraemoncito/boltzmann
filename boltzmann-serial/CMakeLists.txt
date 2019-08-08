@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.14.5)
+project(boltzmann-serial)
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+add_executable(boltzmann-serial d2q9-bgk.c input.params)
+
+option(DEBUG "Enable debug mode" OFF)
+if (DEBUG)
+    message("-- Debug mode enabled")
+    add_definitions(-DDEBUG)
+else (DEBUG)
+    message("-- Debug mode disabled")
+endif (DEBUG)
+
+target_link_libraries(boltzmann-serial)
+configure_file(input.params ${CMAKE_CURRENT_BINARY_DIR}/input.params COPYONLY)
+configure_file(obstacles.dat ${CMAKE_CURRENT_BINARY_DIR}/obstacles.dat COPYONLY)
+configure_file(obstacles_300x200.dat ${CMAKE_CURRENT_BINARY_DIR}/obstacles_300x200.dat COPYONLY)
