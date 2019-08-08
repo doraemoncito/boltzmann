@@ -1,30 +1,47 @@
 /*
-** Code to implement a d2q9-bgk lattice boltzmann scheme.
-** 'd2' inidates a 2-dimensional grid, and
-** 'q9' indicates 9 velocities per grid cell.
-** 'bgk' refers to the Bhatnagar-Gross-Krook collision step.
-**
-** The 'speeds' in each cell are numbered as follows:
-**
-** 6 2 5
-**  \|/
-** 3-0-1
-**  /|\
-** 7 4 8
-**
-** A 2D grid 'unwrapped' in row major order to give a 1D array:
-**
-**           cols
-**       --- --- ---
-**      | D | E | F |
-** rows  --- --- ---
-**      | A | B | C |
-**       --- --- ---
-**
-**  --- --- --- --- --- ---
-** | A | B | C | D | E | F |
-**  --- --- --- --- --- ---
-*/
+ * This software implements a d2q9-bgk lattice boltzmann scheme using OpenCL.
+ * Copyright (c) 2012-2019 Jose Hernandez
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * ---
+ *
+ * 'd2' inidates a 2-dimensional grid, and
+ * 'q9' indicates 9 velocities per grid cell.
+ * 'bgk' refers to the Bhatnagar-Gross-Krook collision step.
+ *
+ * The 'speeds' in each cell are numbered as follows:
+ *
+ * 6 2 5
+ *  \|/
+ * 3-0-1
+ *  /|\
+ * 7 4 8
+ *
+ * A 2D grid 'unwrapped' in row major order to give a 1D array:
+ *
+ *           cols
+ *       --- --- ---
+ *      | D | E | F |
+ * rows  --- --- ---
+ *      | A | B | C |
+ *       --- --- ---
+ *
+ *  --- --- --- --- --- ---
+ * | A | B | C | D | E | F |
+ *  --- --- --- --- --- ---
+ */
 
 #ifdef _WIN32
 #define _CRT_SECURE_NO_WARNINGS

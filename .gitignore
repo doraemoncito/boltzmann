@@ -37,9 +37,10 @@ CMakeCache.txt
 Makefile
 cmake_install.cmake
 *.cbp
-boltzmann-openmp
 av_vels.dat
 final_state.dat
-boltzmann-opencl
-boltzmann-original
-boltzmann-serial
+boltzmann-opencl/boltzmann-opencl
+boltzmann-openmp/boltzmann-openmp
+boltzmann-original/boltzmann-original
+boltzmann-serial/boltzmann-serial
+boltzmann-mpi/boltzmann-mpi

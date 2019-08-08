@@ -1,4 +1,4 @@
-# Boltzmann Fluid Simulation
+# Boltzmann Fluid Simulation (OpenMP version)
 
 Copyright (c) 2012-2019 Jose Hernandez
 
@@ -35,7 +35,7 @@ make
 Once built, the code can be run using this command:
 
 ```shell script
-./convolution
+./boltzmann-openmp
 ```
 
 ## XCode project generation
@@ -47,6 +47,6 @@ rm CMakeCache.txt
 cmake -G "XCode" -DOpenMP_C_FLAGS="-fopenmp=lomp" -DOpenMP_CXX_FLAGS="-fopenmp=lomp" -DOpenMP_C_LIB_NAMES="libomp" -DOpenMP_CXX_LIB_NAMES="libomp" -DOpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp /usr/local/Cellar/libomp/8.0.0/lib/libomp.dylib -I/usr/local/Cellar/libomp/8.0.0/include" -DOpenMP_CXX_LIB_NAMES="libomp" -DOpenMP_libomp_LIBRARY=/usr/local/Cellar/libomp/8.0.0/lib/libomp.dylib -DOpenMP_C_FLAGS="-Xpreprocessor -fopenmp /usr/local/Cellar/libomp/8.0.0/lib/libomp.dylib -I/usr/local/Cellar/libomp/8.0.0/include" .
 ```
 
-# References
+## References
 
 - [LLVM OpenMP®: Support for the OpenMP language](https://openmp.llvm.org)
