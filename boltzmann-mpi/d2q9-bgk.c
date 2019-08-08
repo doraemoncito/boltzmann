@@ -78,17 +78,9 @@ typedef struct {
 
 	/* derived values, calculated after loading the input parameters */
 	int total_cells;   /* total number of occupied cells (e.g. cells without no obstacles) */
-    int local_nx;      /* no. of cells in y-direction */
-    int local_ny;      /* no. of cells in x-direction */
+    int tile_ny;      /* no. of cells in x-direction */
     int start_ii;
     int stop_ii;
-
-    /* pre-computed offsets buffer and pointers */
-    int *lookup_buffer;
-    int *lookup_y_s;
-    int *lookup_y_n;
-    int *lookup_x_w;
-    int *lookup_x_e;
 } t_param;
 
 /* struct to hold the 'speed' values */
@@ -127,7 +119,7 @@ int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsi
 int write_values(const t_param params, t_speed* cells, unsigned char* obstacles, double* av_vels);
 
 /* finalise, including freeing up allocated memory */
-int finalise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsigned char** obstacles_ptr,
+int finalise(const t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsigned char** obstacles_ptr,
 		double** av_vels_ptr, double **global_av_vels_ptr);
 
 /* Sum all the densities in the grid.
@@ -143,6 +135,9 @@ double calc_reynolds(const t_param params, double average_velocity);
 /* utility functions */
 void die(const char* message, const int line, const char *file);
 void debug(const char *format, ...);
+int divRoundUp(int totalRowCount, int numProcs);
+int isOdd(int n);
+int numRowsInTile(int totalRowCount, int numProcs, int rank);
 
 /* MPI variables */
 int myrank;               /* 'myrank' of process among it's cohort */ 
@@ -200,8 +195,6 @@ int main(int argc, char* argv[]) {
     struct timeval tv1,tv2,tv3;
 #endif
 
-    printf("d2q9-bgk lattice Boltzmann scheme: parallel MPI code\n");
-
 	if (argc > 1) {
         sprintf(finalStateFile, FINALSTATEFILE, ".", argv[1]);
         sprintf(avVelocityFile, AVVELSFILE, ".", argv[1]);
@@ -243,10 +236,15 @@ int main(int argc, char* argv[]) {
 	** note that we are assuming that all processes can
 	** write to the screen
 	*/
-	debug("Starting Boltzmann MPI\n");
-	debug("MPI library version %d.%d\n", version, subversion);
-	debug("Node %d hostname: %s\n", myrank, hostname);
-	debug("Cohort size: %d\n", size);
+	if (0 == myrank) {
+		debug("Starting Boltzmann MPI master node\n");
+		debug("MPI library version %d.%d\n", version, subversion);
+		debug("Cohort size: %d\n", size);
+	} else {
+		debug("Starting Boltzmann MPI client node %d\n", myrank);
+		debug("MPI library version %d.%d\n", version, subversion);
+		debug("Cohort size: %d\n", size);
+	}
 
 	/* initialise our data structures and load values from file */
     initialise(&params, &src_cells, &dst_cells, &obstacles, &velocities, &av_vels);
@@ -262,8 +260,9 @@ int main(int argc, char* argv[]) {
 
     for (ii = 0; ii < params.maxIters; ii++) {
         timestep(params, src_cells, dst_cells, src_cells_requests_ptr, src_cells_status_ptr, obstacles);
+        velocities[ii] = av_velocity(params, dst_cells, obstacles);
 
-        temp_swap = src_cells;
+		temp_swap = src_cells;
         src_cells = dst_cells;
         dst_cells = temp_swap;
 
@@ -274,13 +273,11 @@ int main(int argc, char* argv[]) {
         tmp_status_swap = src_cells_status_ptr;
         src_cells_status_ptr = dst_cells_status_ptr;
         dst_cells_status_ptr = tmp_status_swap;
-
-        velocities[ii] = av_velocity(params, src_cells, obstacles);
 #ifdef DEBUG
 		total_density_value = total_density(params, src_cells);
-		TRACE_RANK(0, ("==timestep: %d==\n", ii));
-		TRACE_RANK(0, ("av velocity: %.12E\n", velocities[ii]));
-		TRACE_RANK(0, ("tot density: %.12E\n", total_density_value));
+		TRACE(("==timestep: %d==\n", ii));
+		TRACE(("partial velocity: %.12E\n", velocities[ii]));
+		TRACE(("tot density: %.12E\n", total_density_value));
 #endif
     }
 
@@ -296,6 +293,7 @@ int main(int argc, char* argv[]) {
 	// compute all the average velocities
 	for (ii = 0; ii < params.maxIters; ii++) {
 		av_vels[ii] /= params.total_cells;
+		TRACE_RANK(0, ("av velocity: %.12E\n", av_vels[ii]));
     }
 
 #ifndef _WIN32
@@ -304,26 +302,19 @@ int main(int argc, char* argv[]) {
 #endif
     toc = clock();
 
-  /* write final values and free memory */
-    debug("==done==\n");
+    /* write final values and free memory */
 	reynolds_number = calc_reynolds(params, av_vels[params.maxIters - 1]);
 	if (0 == myrank) {
+	    debug("==done==\n");
 		debug("Reynolds number:\t%.12E\n", reynolds_number);
 		debug("Elapsed CPU time:\t%ld (ms)\n", (toc - tic) / (CLOCKS_PER_SEC / 1000));
 #ifndef _WIN32
 	    debug("Elapsed wall time:\t%ld (ms)\n", (tv3.tv_sec * 1000) + (tv3.tv_usec / 1000));
 #endif
 	}
-	{
-		void *sendbuf = &src_cells[myrank * params.local_ny * params.nx];
-		int sendcount = params.local_ny * params.nx * sizeof(t_speed);
-		MPI_Gather(sendbuf, sendcount, MPI_BYTE, dst_cells, sendcount, MPI_BYTE, 0, MPI_COMM_WORLD);
-	}
 
-	if (0 == myrank) {
-	    write_values(params, dst_cells, obstacles, av_vels);
-	}
-    finalise(&params, &src_cells, &dst_cells, &obstacles, &velocities, &av_vels);
+	write_values(params, src_cells, obstacles, av_vels);
+	finalise(&params, &src_cells, &dst_cells, &obstacles, &velocities, &av_vels);
 
 	/* finalise the MPI environment */
 	MPI_Finalize();
@@ -333,10 +324,10 @@ int main(int argc, char* argv[]) {
 
 int timestep(const t_param params, t_speed* src_cells, t_speed* dst_cells, MPI_Request *requests, MPI_Status *statuses, unsigned char* obstacles) {
     accelerate_flow(params, src_cells, obstacles);
-	TRACE(("Starting requests\n"));
+	TRACE(("Starting halo exchange\n"));
 	MPI_Startall(4, requests);
 	collision(params, src_cells, dst_cells, obstacles, params.start_ii + 1, params.stop_ii - 1, 1);
-	TRACE(("Waiting on requests\n"));
+	TRACE(("Waiting for halo exchange to complete\n"));
 	MPI_Waitall(4, requests, statuses);
 	collision(params, src_cells, dst_cells, obstacles, params.start_ii, params.stop_ii, params.stop_ii - params.start_ii - 1);
     return EXIT_SUCCESS;
@@ -351,8 +342,8 @@ int accelerate_flow(const t_param params, t_speed * cells, unsigned char* obstac
     const double w2 = params.density * params.accel / 36.0;
 
     /* modify the first column of the grid */
-    for (ii = 0; ii < params.ny; ii++) {
-        offset = ii * params.nx /* + jj (where jj=0) */;
+    for (ii = params.start_ii; ii < params.stop_ii; ii++) {
+        offset = ii * params.nx;
         speeds = cells[offset].speeds;
         /* if the cell is not occupied and we don't send a density negative */
         if (!obstacles[offset] && (speeds[3] - w1) > 0.0 && (speeds[6] - w2) > 0.0 && (speeds[7] - w2) > 0.0) {
@@ -370,15 +361,9 @@ int accelerate_flow(const t_param params, t_speed * cells, unsigned char* obstac
     return EXIT_SUCCESS;
 }
 
-/*
- * Combined and rebound and collision function.
- */
 int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsigned char* obstacles, int start, int stop, int increment) {
-    int ii, jj, kk;     		       /* generic counters */
-    int register offset;
-#ifdef BOLTZMANN_ACCURATE
+    int ii, jj, kk, offset;            /* generic counters */
     const double c_sq = 1.0 / 3.0;     /* square of speed of sound */
-#endif
     const double w0 = 4.0 / 9.0;       /* weighting factor */
     const double w1 = 1.0 / 9.0;       /* weighting factor */
     const double w2 = 1.0 / 36.0;      /* weighting factor */
@@ -394,21 +379,21 @@ int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsi
     /* divide the workload amongst the number of nodes in the cohort so that each myrank takes on just one sub-section of
      * the array.
      */
-	TRACE(("processing ii range %03d to %03d in steps of size %d\n", start, stop - 1, increment));
+	TRACE(("processing ii range [%03d, %03d) in steps of size %d\n", start, stop, increment));
 
 	/* loop over the cells in the grid.
      * NB: the collision step is called after the propagate step and so values of interest are in the scratch-space grid
      */
     for (ii = start; ii < stop; ii += increment) {
-        offset = ii * params.nx;
-        y_s = params.lookup_y_s[ii];
-        y_n = params.lookup_y_n[ii];
         for (jj = 0; jj < params.nx; jj++) {
-            dst_speeds = dst_cells[offset++].speeds;
+            offset = ii * params.nx + jj;
+            dst_speeds = dst_cells[offset].speeds;
 
             /* PROPAGATE: determine indices of axis-direction neighbours respecting periodic boundary conditions (wrap around) */
-            x_w = params.lookup_x_w[jj];
-            x_e = params.lookup_x_e[jj];
+            y_s = ii + 1;
+            x_w = (jj + 1) % params.nx;
+            y_n = ii - 1;
+            x_e = (jj == 0) ? (jj + params.nx - 1) : (jj - 1);
 
             /* if the cell contains an obstacle */
             if (obstacles[ii * params.nx + jj]) {
@@ -443,7 +428,6 @@ int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsi
                 u_x = (speeds[1] + speeds[5] + speeds[8] - (speeds[3] + speeds[6] + speeds[7])) / local_density;
                 /* compute y velocity component */
                 u_y = (speeds[2] + speeds[5] + speeds[6] - (speeds[4] + speeds[7] + speeds[8])) / local_density;
-#ifdef BOLTZMANN_ACCURATE
                 /* velocity squared */
                 u_sq = u_x * u_x + u_y * u_y;
                 /* directional velocity components */
@@ -468,40 +452,6 @@ int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsi
                 for (kk = 0; kk < NSPEEDS; kk++) {
                     dst_speeds[kk] = (speeds[kk] + params.omega * (d_equ[kk] - speeds[kk]));
                 }
-#else
-                /* directional velocity components */
-                u[1] =  u_x;       /* east */
-                u[2] =  u_y;       /* north */
-                u[5] =  u_x + u_y; /* north-east */
-                u[6] = -u_x + u_y; /* north-west */
-                /* velocity squared over twice the speed of sound */
-                u_sq = (u_x * u_x + u_y * u_y) * 1.5;
-                /* equilibrium densities */
-                /* zero velocity density: weight w0 */
-                d_equ[0] = w0 * local_density * (1.0 - u_sq);
-
-                /* axis speeds: weight w1 */
-                /* Note: reusing the otherwise unused u[0] position to pre-compute reused values and speed up the function */
-                u[0] = 1.0 + (u[1] * u[1] * 4.5) - u_sq;
-                d_equ[1] = w1 * local_density * (u[0] + u[1] * 3.0);
-                d_equ[3] = w1 * local_density * (u[0] - u[1] * 3.0);
-                u[0] = 1.0 + (u[2] * u[2] * 4.5) - u_sq;
-                d_equ[2] = w1 * local_density * (u[0] + u[2] * 3.0);
-                d_equ[4] = w1 * local_density * (u[0] - u[2] * 3.0);
-                /* diagonal speeds: weight w2 */
-                u[0] = 1.0 + (u[5] * u[5] * 4.5) - u_sq;
-                d_equ[5] = w2 * local_density * (u[0] + u[5] * 3.0);
-                d_equ[7] = w2 * local_density * (u[0] - u[5] * 3.0);
-                u[0] = 1.0 + (u[6] * u[6] * 4.5) - u_sq;
-                d_equ[6] = w2 * local_density * (u[0] + u[6] * 3.0);
-                d_equ[8] = w2 * local_density * (u[0] - u[6] * 3.0);
-
-                /* relaxation step */
-                for (kk = 0; kk < NSPEEDS; kk++) {
-                    speeds[kk] += params.omega * (d_equ[kk] - speeds[kk]);
-                }
-                memcpy(dst_speeds, speeds, sizeof(t_speed));
-#endif
             }
         }
     }
@@ -511,20 +461,20 @@ int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsi
 
 void send_halo_init(int Id, t_speed* const cells, int offset, int xchgbuffersize, int destination, int tag, MPI_Request *request) {
 	TRACE(("%d Initialising send request from process '%d' to process %d; cell buffer offset = %d\n", Id, myrank, destination, offset));
-	MPI_Send_init(&cells[offset], xchgbuffersize, MPI_BYTE, destination, tag, MPI_COMM_WORLD, request);
-	TRACE(("%d Initialised send request '%d' to process %d\n", Id, myrank, destination));
+	MPI_Send_init(&cells[offset], xchgbuffersize, MPI_UNSIGNED_CHAR, destination, tag, MPI_COMM_WORLD, request);
+	TRACE(("%d Initialised send request from process '%d' to process %d\n", Id, myrank, destination));
 }
 
 void receive_halo_init(int Id, t_speed* const cells, int offset, int xchgbuffersize, int source, int tag, MPI_Request *request) {
 	TRACE(("%d Initialising receive request in process '%d' from process '%d'; cell buffer offset = %d\n", Id, myrank, source, offset));
-	MPI_Recv_init(&cells[offset], xchgbuffersize, MPI_BYTE, source, tag, MPI_COMM_WORLD, request);
+	MPI_Recv_init(&cells[offset], xchgbuffersize, MPI_UNSIGNED_CHAR, source, tag, MPI_COMM_WORLD, request);
 	TRACE(("%d Initialising receive request in process '%d' from process '%d'\n", Id, myrank, source));
 }
 
 int do_halo_init(const t_param params, t_speed* cells, MPI_Request *requests) {
-	const static int tag = 0;
+	const static int left = 0;
+	const static int right = 0;
 	int i, source, destination, offset;
-	int blocksize  = params.local_ny * params.local_nx;
 	int xchgbuffersize = params.nx * sizeof(t_speed);
 
 	/* each process has to send and receive one row, we'll split sending and receiving between odd and even processes
@@ -535,22 +485,22 @@ int do_halo_init(const t_param params, t_speed* cells, MPI_Request *requests) {
 			source = myrank;
 
 			destination = (myrank > 0) ? ((myrank - 1) % size) : (size - 1);
-			offset = blocksize * source;
-			send_halo_init(0, cells, offset, xchgbuffersize, destination, tag, &requests[0]);
+			offset = 0;
+			send_halo_init(0, cells, offset, xchgbuffersize, destination, left, &requests[0]);
 
 			destination = (myrank + 1) % size;
-			offset = MIN((blocksize * source + blocksize), params.nx * params.ny) - params.nx;
-			send_halo_init(1, cells, offset, xchgbuffersize, destination, tag, &requests[1]);
+			offset = (params.stop_ii - 1) * params.nx;
+			send_halo_init(1, cells, offset, xchgbuffersize, destination, right, &requests[1]);
 		} else {
 			destination = myrank;
 
 			source = (myrank + 1) % size;
-			offset = blocksize * source;
-			receive_halo_init(2, cells, offset, xchgbuffersize, source, tag, &requests[2]);
+			offset = params.stop_ii * params.nx;
+			receive_halo_init(2, cells, offset, xchgbuffersize, source, left, &requests[2]);
 
 			source = (myrank > 0) ? ((myrank - 1) % size) : (size - 1);
-			offset = MIN((blocksize * source + blocksize), params.nx * params.ny) - params.nx;
-			receive_halo_init(3, cells, offset, xchgbuffersize, source, tag, &requests[3]);
+			offset = -params.nx;
+			receive_halo_init(3, cells, offset, xchgbuffersize, source, right, &requests[3]);
 		}
 	}
 
@@ -566,6 +516,7 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
     int retval;        /* to hold return value for checking */
     double w0, w1, w2; /* weighting factors */
 	int obstacle_array_size;  /* size of the obstacle array in bytes */
+	int cell_array_size;
 
 	if (0 == myrank) {
 		/* open the parameter file */
@@ -601,14 +552,13 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
 		fclose(fp);
 	}
 
-	params->local_nx = params->nx;
-	/* If the number of rows does not divide nicely into the number of processors we'll increment the row count by
-	 * one and make sure that the last process adjust its internal count not to exceed the total.
+	/* If the number of rows does not divide nicely into the number of processors we'll increment the tile row count by
+	 * one and make sure that the last process/rank adjusts its internal count not to exceed the real total row count.
 	 */
-	params->local_ny = (params->ny + size - 1) / size;
+	params->tile_ny = divRoundUp(params->ny, size);
 
 	TRACE(((0 == myrank) ? "Broadcasting input parameters ...\n" : "Awaiting reception of input parameters ...\n"));
-	MPI_Bcast(params, sizeof(*params), MPI_BYTE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(params, sizeof(*params), MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 	TRACE(((0 == myrank) ? "... input parameter broadcast complete\n": "... input parameter reception complete\n"));
 
 	TRACE(("Parameter nx = %d\n", params->nx));
@@ -619,27 +569,9 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
 	TRACE(("Parameter acceleration = %lf\n", params->accel));
 	TRACE(("Parameter omega %lf\n", params->omega));
 
-    params->start_ii = myrank * params->local_ny;
-    params->stop_ii = MIN(((myrank + 1) * params->local_ny), params->ny);
-
-    params->lookup_buffer = (int *) malloc(sizeof(int) * (params->ny * 2 + params->nx * 2));
-    if (params->lookup_buffer == NULL)
-    	die("cannot allocate memory for offset buffer", __LINE__, __FILE__);
-
-    params->lookup_y_s = &params->lookup_buffer[0];
-    params->lookup_y_n = &params->lookup_y_s[params->ny];
-    params->lookup_x_w = &params->lookup_y_n[params->ny];
-    params->lookup_x_e = &params->lookup_x_w[params->nx];
-
-    /* Pre-calculate offsets to speed up memory access in the collision loop */
-    for (ii = 0; ii < params->ny; ii++) {
-    	params->lookup_y_s[ii] = (ii + 1) % params->ny;
-    	params->lookup_y_n[ii] = (ii == 0) ? (ii + params->ny - 1) : (ii - 1);
-		for (jj = 0; jj < params->nx; jj++) {
-			params->lookup_x_w[jj] = (jj + 1) % params->nx;
-			params->lookup_x_e[jj] = (jj == 0) ? (jj + params->nx - 1) : (jj - 1);
-		}
-	}
+    params->start_ii = 0;
+    params->stop_ii = numRowsInTile(params->ny, size, myrank);
+    TRACE(("start %d, stop %d\n", params->start_ii, params->stop_ii));
 
 	/*
      * Allocate memory.
@@ -653,17 +585,27 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
      * Note also that we are using a structure to hold an array of 'speeds'.  We will allocate a 1D array of these structs.
      */
 
-    /* main grid */
-    *cells_ptr = (t_speed*) malloc(sizeof(t_speed) * (params->local_ny * size * params->nx));
+    /* main grid. size is given by the local block height plus the row before and after multiplied by the row length. */
+    TRACE(("Allocating source cell array\n"));
+    cell_array_size = sizeof(t_speed) * ((params->tile_ny + 2) * params->nx);
+    *cells_ptr = (t_speed*) malloc(cell_array_size);
     if (*cells_ptr == NULL)
         die("cannot allocate memory for cells", __LINE__, __FILE__);
+	memset(*cells_ptr, 0, cell_array_size);
+	*cells_ptr = &(*cells_ptr)[params->nx];
 
-    /* 'helper' grid, used as scratch space */
-    *tmp_cells_ptr = (t_speed*) malloc(sizeof(t_speed) * (params->local_ny * size * params->nx));
+    /* 'helper' grid, used as scratch space, its size is given by the local block height plus the row before and after
+     * multiplied by the row length.
+     */
+    TRACE(("Allocating temporary cell array\n"));
+    *tmp_cells_ptr = (t_speed*) malloc(cell_array_size);
     if (*tmp_cells_ptr == NULL)
         die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
+	memset(*tmp_cells_ptr, 0, cell_array_size);
+	*tmp_cells_ptr = &(*tmp_cells_ptr)[params->nx];
 
-    /* the map of obstacles */
+	/* the map of obstacles */
+    TRACE(("Allocating obstacle array\n"));
 	obstacle_array_size = sizeof(unsigned char) * (params->ny * params->nx);
 	*obstacles_ptr = (unsigned char *) malloc(obstacle_array_size);
     if (*obstacles_ptr == NULL)
@@ -674,7 +616,8 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
     w1 = params->density / 9.0;
     w2 = params->density / 36.0;
 
-    for (ii = 0; ii < params->ny; ii++) {
+    TRACE(("Initialising cell array\n"));
+    for (ii = 0; ii < params->tile_ny; ii++) {
         for (jj = 0; jj < params->nx; jj++) {
             /* centre */
             (*cells_ptr)[ii * params->nx + jj].speeds[0] = w0;
@@ -693,11 +636,7 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
 
 	if (0 == myrank) {
 		/* first set all cells in obstacle array to zero */
-		for (ii = 0; ii < params->ny; ii++) {
-			for (jj = 0; jj < params->nx; jj++) {
-				(*obstacles_ptr)[ii * params->nx + jj] = 0;
-			}
-		}
+		memset(*obstacles_ptr, 0, obstacle_array_size);
 
 		/* open the obstacle data file */
 		fp = fopen(OBSTACLEFILE, "r");
@@ -730,8 +669,19 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
 	}
 
 	TRACE(((0 == myrank) ? "Broadcasting obstacle array ...\n" : "Awaiting reception of obstacle array ...\n"));
-	MPI_Bcast(*obstacles_ptr, obstacle_array_size, MPI_BYTE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(*obstacles_ptr, obstacle_array_size, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 	TRACE(((0 == myrank) ? "... obstacle array broadcast complete\n" : "... obstacle array reception complete\n"));
+
+	{
+		obstacle_array_size = sizeof(unsigned char) * (params->tile_ny * params->nx);
+	    unsigned char* small_obstacles_ptr = (unsigned char *) malloc(obstacle_array_size);
+	    if (small_obstacles_ptr == NULL) {
+	        die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
+	    }
+		memcpy(small_obstacles_ptr, &(*obstacles_ptr)[myrank * params->tile_ny * params->nx], (params->stop_ii) * params->nx);
+        free(*obstacles_ptr);
+    	*obstacles_ptr = small_obstacles_ptr;
+	}
 
 	/* allocate space to hold a record of the avarage velocities computed at each timestep */
     *av_vels_ptr = (double*) malloc(sizeof(double) * params->maxIters);
@@ -740,22 +690,15 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
     return EXIT_SUCCESS;
 }
 
-int finalise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsigned char** obstacles_ptr,
+int finalise(const t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsigned char** obstacles_ptr,
 		double** av_vels_ptr, double **global_av_vels_ptr) {
     /*
      ** free up allocated memory
      */
-    free(params->lookup_buffer);
-    params->lookup_buffer = NULL;
-    params->lookup_y_s = NULL;
-    params->lookup_y_n = NULL;
-    params->lookup_x_w = NULL;
-    params->lookup_x_e = NULL;
-
-    free(*cells_ptr);
+    free(&(*cells_ptr)[-params->nx]);
     *cells_ptr = NULL;
 
-    free(*tmp_cells_ptr);
+    free(&(*tmp_cells_ptr)[-params->nx]);
     *tmp_cells_ptr = NULL;
 
     free(*obstacles_ptr);
@@ -776,7 +719,7 @@ double av_velocity(const t_param params, t_speed* cells, unsigned char* obstacle
     double tot_u_x = 0.0;           /* accumulated x-components of velocity */
     double *speeds;                 /* directional speeds */
 
-	TRACE(("processing average velocity ii range %03d to %03d\n", myrank * params.local_ny, ((myrank + 1) * params.local_ny) - 1));
+	TRACE(("processing velocity ii range [%03d, %03d)\n", params.start_ii, params.stop_ii));
 
     /* Loop over all non-blocked cells.  Please note that at this point we only compute the average velocity for the
 	 * block we're working with.  The overall averages will be calculated at the end of the simulation.
@@ -808,7 +751,7 @@ double total_density(const t_param params, t_speed* cells) {
     double partial = 0.0;  /* partial accumulator */
 	double total = 0.0;    /* accumulator */
 
-	TRACE(("processing total density ii range %03d to %03d\n", myrank * params.local_ny, ((myrank + 1) * params.local_ny) - 1));
+	TRACE(("processing total density ii range [%03d, %03d)\n", params.start_ii, params.stop_ii));
 
     for (ii = params.start_ii; ii < params.stop_ii; ii++) {
         for (jj = 0; jj < params.nx; jj++) {
@@ -827,52 +770,76 @@ double total_density(const t_param params, t_speed* cells) {
 
 int write_values(const t_param params, t_speed* cells, unsigned char* obstacles, double* av_vels) {
     FILE* fp; /* file pointer */
-    int ii, jj, offset; /* generic counters */
+    int i, ii, jj, offset; /* generic counters */
     const double c_sq = 1.0 / 3.0; /* sq. of speed of sound */
     double local_density; /* per grid cell sum of densities */
     double pressure; /* fluid pressure in grid cell */
     double u_x; /* x-component of velocity in grid cell */
     double u_y; /* y-component of velocity in grid cell */
     double * speeds;
+	const int cellbuffersize = params.tile_ny * params.nx * sizeof(t_speed);
+	const int obstaclebuffersize = params.tile_ny * params.nx * sizeof(unsigned char);
 
-	fp = fopen(finalStateFile,"w");
-    if (fp == NULL) {
-        die("could not open file output file", __LINE__, __FILE__);
-    }
+    if (0 == myrank) {
+    	MPI_Status status;
 
-    for (ii = 0; ii < params.ny; ii++) {
-        for (jj = 0; jj < params.nx; jj++) {
-            offset = ii * params.nx + jj;
-            /* an occupied cell */
-            if (obstacles[offset]) {
-                u_x = u_y = 0.0;
-                pressure = params.density * c_sq;
-            } else /* no obstacle */{
-                speeds = cells[offset].speeds;
-                local_density = speeds[0] + speeds[1] + speeds[2] + speeds[3] + speeds[4] + speeds[5] + speeds[6] + speeds[7] + speeds[8];
-                /* compute x velocity component */
-                u_x = (speeds[1] + speeds[5] + speeds[8] - (speeds[3] + speeds[6] + speeds[7])) / local_density;
-                /* compute y velocity component */
-                u_y = (speeds[2] + speeds[5] + speeds[6] - (speeds[4] + speeds[7] + speeds[8])) / local_density;
-                /* compute pressure */
-                pressure = local_density * c_sq;
-            }
-            /* write to file */
-            fprintf(fp, "%d %d %.12E %.12E %.12E %d\n", ii, jj, u_x, u_y, pressure, obstacles[offset]);
-        }
-    }
+    	fp = fopen(finalStateFile, "w");
 
-    fclose(fp);
+    	if (fp == NULL) {
+			die("could not open file output file", __LINE__, __FILE__);
+		}
 
-  fp = fopen(avVelocityFile,"w");
-    if (fp == NULL) {
-        die("could not open file output file", __LINE__, __FILE__);
-    }
-    for (ii = 0; ii < params.maxIters; ii++) {
-        fprintf(fp, "%d:\t%.12E\n", ii, av_vels[ii]);
-    }
+		for (i = 0; i < size; i++) {
+			TRACE(("Writing process %d to file\n", i));
+			if (i > 0) {
+				TRACE(("Awaiting buffer from process %d\n", i));
+				MPI_Recv(cells, cellbuffersize, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &status);
+				MPI_Recv(obstacles, obstaclebuffersize, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &status);
+				TRACE(("Received buffer from process %d\n", i));
+			}
+			TRACE(("Range [%d, %d)\n", i * params.tile_ny, MIN(((i+1) * params.tile_ny), (params.ny))));
+			for (ii = i * params.tile_ny; ii < MIN(((i+1) * params.tile_ny), (params.ny)); ii++) {
+				for (jj = 0; jj < params.nx; jj++) {
+					offset = i * params.nx + jj;
+					/* an occupied cell */
+					if (obstacles[offset]) {
+						u_x = u_y = 0.0;
+						pressure = params.density * c_sq;
+					} else /* no obstacle */{
+						speeds = cells[offset].speeds;
+						local_density = speeds[0] + speeds[1] + speeds[2] + speeds[3] + speeds[4] + speeds[5]
+								+ speeds[6] + speeds[7] + speeds[8];
+						/* compute x velocity component */
+						u_x = (speeds[1] + speeds[5] + speeds[8] - (speeds[3] + speeds[6] + speeds[7])) / local_density;
+						/* compute y velocity component */
+						u_y = (speeds[2] + speeds[5] + speeds[6] - (speeds[4] + speeds[7] + speeds[8])) / local_density;
+						/* compute pressure */
+						pressure = local_density * c_sq;
+					}
+					/* write to file */
+					fprintf(fp, "%d %d %.12E %.12E %.12E %d\n", ii, jj, u_x, u_y, pressure, obstacles[offset]);
+				}
+			}
+			fflush(fp);
+		}
 
-    fclose(fp);
+		fclose(fp);
+
+		fp = fopen(avVelocityFile, "w");
+		if (fp == NULL) {
+			die("could not open file output file", __LINE__, __FILE__);
+		}
+		for (ii = 0; ii < params.maxIters; ii++) {
+			fprintf(fp, "%d:\t%.12E\n", ii, av_vels[ii]);
+		}
+
+		fclose(fp);
+	} else {
+		TRACE(("Sending buffer from process %d to root\n", myrank));
+		MPI_Send(cells, cellbuffersize, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+		MPI_Send(obstacles, obstaclebuffersize, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+		TRACE(("Sent buffer from process %d to root\n", myrank));
+	}
 
     return EXIT_SUCCESS;
 }
@@ -893,4 +860,18 @@ void debug(const char *format, ...) {
 	va_start(args, format);
 	vprintf(format, args);
 	va_end(args);
+	fflush(stdout);
+}
+
+int divRoundUp(int totalRowCount, int numProcs) {
+	return (totalRowCount + numProcs - 1) / numProcs;
+}
+
+int isOdd(int n) {
+	return n % 2 != 0;
+}
+
+int numRowsInTile(int totalRowCount, int numProcs, int rank) {
+	int q = divRoundUp(totalRowCount, numProcs);
+	return  MIN(totalRowCount, q * (rank + 1)) - (q * rank);
 }
