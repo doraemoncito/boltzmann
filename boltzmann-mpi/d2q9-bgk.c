@@ -121,10 +121,10 @@ int initialise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, un
  ** timestep calls, in order, the functions:
  ** accelerate_flow(), propagate(), collision()
  */
-int timestep(const t_param params, t_speed* src_cells, t_speed* dst_cells, MPI_Request *requests, MPI_Status *statuses, unsigned char* obstacles);
-int accelerate_flow(const t_param params, t_speed* cells, unsigned char* obstacles);
-int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsigned char* obstacles, int start, int stop, int increment);
-int write_values(const t_param params, t_speed* cells, unsigned char* obstacles, double* av_vels);
+int timestep(t_param params, t_speed* src_cells, t_speed* dst_cells, MPI_Request *requests, MPI_Status *statuses, unsigned char* obstacles);
+int accelerate_flow(t_param params, t_speed* cells, const unsigned char* obstacles);
+int collision(t_param params, t_speed* src_cells, t_speed* dst_cells, const unsigned char* obstacles, int start, int stop, int increment);
+int write_values(t_param params, t_speed* cells, unsigned char* obstacles, double* av_vels);
 
 /* finalise, including freeing up allocated memory */
 int finalise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsigned char** obstacles_ptr,
@@ -132,16 +132,16 @@ int finalise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsi
 
 /* Sum all the densities in the grid.
  ** The total should remain constant from one timestep to the next. */
-double total_density(const t_param params, t_speed* cells);
+double total_density(t_param params, t_speed* cells);
 
 /* compute average velocity */
-double av_velocity(const t_param params, t_speed* cells, unsigned char* obstacles);
+double av_velocity(t_param params, t_speed* cells, const unsigned char* obstacles);
 
 /* calculate Reynolds number */
-double calc_reynolds(const t_param params, double average_velocity);
+double calc_reynolds(t_param params, double average_velocity);
 
 /* utility functions */
-void die(const char* message, const int line, const char *file);
+void die(const char* message, int line, const char *file);
 void debug(const char *format, ...);
 
 /* MPI variables */
@@ -153,7 +153,7 @@ char hostname[MPI_MAX_PROCESSOR_NAME];  /* character array to hold hostname runn
 int version;
 int subversion;
 
-int do_halo_init(const t_param params, t_speed* cells, MPI_Request *requests);
+int do_halo_init(t_param params, t_speed* cells, MPI_Request *requests);
 void debug(const char *format, ...);
 
 /* RESULTS FOR 1 TIMESTEP
@@ -238,17 +238,22 @@ int main(int argc, char* argv[]) {
 	TRACE_RANK(0, ("sizeof(int *):         %lu\n", sizeof(int *)));
 	TRACE_RANK(0, ("sizeof(unsigned char): %lu\n", sizeof(unsigned char)));
 
-	/* 
-	** make use of these values in our print statement
-	** note that we are assuming that all processes can
-	** write to the screen
-	*/
-	debug("Starting Boltzmann MPI\n");
-	debug("MPI library version %d.%d\n", version, subversion);
-	debug("Node %d hostname: %s\n", myrank, hostname);
-	debug("Cohort size: %d\n", size);
+    /*
+     * M>ake use of these values in our print statement.
+     * Please note that we are assuming that all processes can write to the screen.
+     */
+    if (0 == myrank) {
+        debug("Starting Boltzmann MPI master node\n");
+        debug("MPI library version %d.%d\n", version, subversion);
+        debug("Cohort size: %d\n", size);
+    } else {
+        debug("Starting Boltzmann MPI client node %d\n", myrank);
+        debug("MPI library version %d.%d\n", version, subversion);
+        debug("Cohort size: %d\n", size);
+    }
 
-	/* initialise our data structures and load values from file */
+
+    /* initialise our data structures and load values from file */
     initialise(&params, &src_cells, &dst_cells, &obstacles, &velocities, &av_vels);
 
 	/* iterate for maxIters time steps */
@@ -342,7 +347,7 @@ int timestep(const t_param params, t_speed* src_cells, t_speed* dst_cells, MPI_R
     return EXIT_SUCCESS;
 }
 
-int accelerate_flow(const t_param params, t_speed * cells, unsigned char* obstacles) {
+int accelerate_flow(const t_param params, t_speed * cells, const unsigned char* obstacles) {
     int ii, offset; /* generic counters */
     double * speeds;
 
@@ -373,7 +378,7 @@ int accelerate_flow(const t_param params, t_speed * cells, unsigned char* obstac
 /*
  * Combined and rebound and collision function.
  */
-int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, unsigned char* obstacles, int start, int stop, int increment) {
+int collision(const t_param params, t_speed* src_cells, t_speed* dst_cells, const unsigned char* obstacles, int start, int stop, int increment) {
     int ii, jj, kk;     		       /* generic counters */
     int register offset;
 #ifdef BOLTZMANN_ACCURATE
@@ -770,7 +775,7 @@ int finalise(t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr, unsi
     return EXIT_SUCCESS;
 }
 
-double av_velocity(const t_param params, t_speed* cells, unsigned char* obstacles) {
+double av_velocity(const t_param params, t_speed* cells, const unsigned char* obstacles) {
     int ii, jj, offset;             /* generic counters */
     double local_density;           /* total density in cell */
     double tot_u_x = 0.0;           /* accumulated x-components of velocity */
